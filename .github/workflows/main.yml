@@ -15,27 +15,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract ZIP
+      - name: Extract project ZIP
         run: |
-          echo "Finding ZIP files..."
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: No ZIP file found!"
-            ls -la
             exit 1
           fi
 
-          echo "Extracting: $ZIP_FILE"
+          mkdir -p extracted
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 3 -type f
+          echo "Searching for package.json..."
 
-          cp -a extracted/. .
+          PACKAGE_JSON=$(find extracted -type f -name "package.json" | head -n 1)
+
+          if [ -z "$PACKAGE_JSON" ]; then
+            echo "ERROR: No package.json found inside the ZIP!"
+            echo "ZIP contents:"
+            find extracted -maxdepth 5 -type f
+            exit 1
+          fi
+
+          APP_DIR="$(dirname "$PACKAGE_JSON")"
+
+          echo "Found project in: $APP_DIR"
+          echo "APP_DIR=$GITHUB_WORKSPACE/$APP_DIR" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -49,18 +58,29 @@ jobs:
           java-version: "21"
 
       - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
         run: npm install
 
-      - name: Copy Matter.js
-        run: cp node_modules/matter-js/build/matter.min.js www/matter.min.js
+      - name: Install Matter.js
+        working-directory: ${{ env.APP_DIR }}
+        run: npm install matter-js
+
+      - name: Prepare game
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          mkdir -p www
+          cp node_modules/matter-js/build/matter.min.js www/matter.min.js
 
       - name: Create Android project
+        working-directory: ${{ env.APP_DIR }}
         run: npx cap add android
 
       - name: Sync Android project
+        working-directory: ${{ env.APP_DIR }}
         run: npx cap sync android
 
-      - name: Build APK
+      - name: Build debug APK
+        working-directory: ${{ env.APP_DIR }}
         run: |
           cd android
           chmod +x gradlew
@@ -70,4 +90,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Physics-Playground-debug-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.APP_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
